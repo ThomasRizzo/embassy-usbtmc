@@ -164,55 +164,54 @@ async fn usbtmc_runner(mut tmc: UsbTmc) {
     let resp_rx = RESP_CHANNEL.receiver();
 
     loop {
-        let mut header = [0u8; 12];
-        let n: usize = match tmc.out.read(&mut header).await {
+        let mut buf = [0u8; 64];
+
+        let n = match tmc.out.read(&mut buf).await {
             Ok(n) => n,
             Err(_) => continue,
         };
-
         if n < 12 {
             continue;
         }
 
-        let msg_id = header[0];
-        let b_tag = header[1];
-        let b_tag_inv = header[2];
-        if b_tag_inv != (!b_tag) {
+        let msg_id = buf[0];
+        let b_tag = buf[1];
+        let b_tag_inv = buf[2];
+
+        if b_tag_inv != !b_tag {
             continue;
         }
 
-        let transfer_len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+        let transfer_len = u32::from_le_bytes(buf[4..8].try_into().unwrap()) as usize;
 
         match msg_id {
             DEV_DEP_MSG_OUT => {
+                let pad = (4 - ((12 + transfer_len) % 4)) % 4;
+                let bytes_to_consume = transfer_len + pad;
+
                 let mut payload = [0u8; MAX_SCPI_LEN];
                 let mut copied = 0usize;
 
-                let first_payload = n.saturating_sub(12);
-                let take = first_payload.min(transfer_len);
-                if take > 0 {
-                    payload[0..take].copy_from_slice(&header[12..12 + take]);
-                    copied = take;
+                let first_payload = (n - 12).min(transfer_len);
+                if first_payload > 0 {
+                    payload[0..first_payload].copy_from_slice(&buf[12..12 + first_payload]);
+                    copied = first_payload;
                 }
 
-                let mut remaining = transfer_len.saturating_sub(copied);
-                while remaining > 0 && copied < MAX_SCPI_LEN {
-                    let mut tmp = [0u8; MPS];
-                    let read: usize = match tmc.out.read(&mut tmp).await {
+                let mut remaining = bytes_to_consume.saturating_sub(first_payload);
+                while remaining > 0 {
+                    let read_n = match tmc.out.read(&mut buf).await {
                         Ok(r) => r,
                         Err(_) => break,
                     };
-                    let take = read.min(remaining);
-                    payload[copied..copied + take].copy_from_slice(&tmp[0..take]);
-                    copied += take;
-                    remaining -= take;
-                    if read < MPS {
-                        break;
-                    }
-                }
+                    let take = read_n.min(remaining);
 
-                if !(12 + transfer_len).is_multiple_of(4) {
-                    let _ = tmc.out.read(&mut [0; MPS]).await;
+                    if copied < transfer_len {
+                        let to_copy = take.min(transfer_len - copied);
+                        payload[copied..copied + to_copy].copy_from_slice(&buf[0..to_copy]);
+                        copied += to_copy;
+                    }
+                    remaining -= take;
                 }
 
                 let cmd = Command {
@@ -234,17 +233,14 @@ async fn usbtmc_runner(mut tmc: UsbTmc) {
                 header[4..8].copy_from_slice(&(send_len as u32).to_le_bytes());
                 header[8] = 1;
 
-                let mut buf = [0u8; 1024];
-                buf[0..12].copy_from_slice(&header);
-                buf[12..12 + send_len].copy_from_slice(&resp.data[0..send_len]);
-
                 let total = 12 + send_len;
                 let pad = ((4 - (total % 4)) % 4) as usize;
-                for i in 0..pad {
-                    buf[total + i] = 0;
-                }
 
-                let _ = tmc.inp.write(&buf[0..total + pad]).await;
+                let mut out_buf = [0u8; 1024];
+                out_buf[0..12].copy_from_slice(&header);
+                out_buf[12..12 + send_len].copy_from_slice(&resp.data[0..send_len]);
+
+                let _ = tmc.inp.write(&out_buf[0..total + pad]).await;
             }
             _ => {}
         }
