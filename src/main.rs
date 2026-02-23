@@ -186,7 +186,8 @@ async fn usbtmc_runner(mut tmc: UsbTmc) {
 
         match msg_id {
             DEV_DEP_MSG_OUT => {
-                let pad = (4 - ((12 + transfer_len) % 4)) % 4;
+                let total_header_payload = 12 + transfer_len;
+                let pad = (4 - (total_header_payload % 4)) % 4;
                 let bytes_to_consume = transfer_len + pad;
 
                 let mut payload = [0u8; MAX_SCPI_LEN];
