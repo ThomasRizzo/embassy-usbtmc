@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
@@ -56,8 +57,13 @@ const DEV_DEP_MSG_OUT: u8 = 1;
 const REQUEST_DEV_DEP_MSG_IN: u8 = 2;
 const DEV_DEP_MSG_IN: u8 = 2;
 
+const GET_CAPABILITIES: u8 = 0x07;
+const INITIATE_ABORT_BULK_OUT: u8 = 0x01;
+const CHECK_ABORT_BULK_OUT_STATUS: u8 = 0x02;
+
 const MPS: usize = 64;
 
+static ABORT_BTAG: AtomicU8 = AtomicU8::new(0);
 static HANDLER: StaticCell<TmcControlHandler> = StaticCell::new();
 
 struct TmcControlHandler;
@@ -68,13 +74,20 @@ impl Handler for TmcControlHandler {
         req: embassy_usb::control::Request,
         _buf: &[u8],
     ) -> Option<OutResponse> {
-        if req.request_type == RequestType::Class
-            && req.recipient == Recipient::Interface
-            && req.request == 0x01
+        if req.request_type != RequestType::Class
+            || req.recipient != Recipient::Interface
         {
-            Some(OutResponse::Accepted)
-        } else {
-            None
+            return None;
+        }
+
+        match req.request {
+            INITIATE_ABORT_BULK_OUT => {
+                let btag = (req.value as u8) & 0x7F;
+                ABORT_BTAG.store(btag, Ordering::Relaxed);
+                Some(OutResponse::Accepted)
+            }
+            0x05 => Some(OutResponse::Accepted),
+            _ => None,
         }
     }
 
@@ -83,15 +96,38 @@ impl Handler for TmcControlHandler {
         req: embassy_usb::control::Request,
         buf: &'a mut [u8],
     ) -> Option<InResponse<'a>> {
-        if req.request_type == RequestType::Class
-            && req.recipient == Recipient::Interface
-            && req.request == 0x01
-            && buf.len() >= 6
+        if req.request_type != RequestType::Class
+            || req.recipient != Recipient::Interface
         {
-            buf[0..6].copy_from_slice(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
-            Some(InResponse::Accepted(&buf[..6]))
-        } else {
-            Some(InResponse::Rejected)
+            return None;
+        }
+
+        match req.request {
+            GET_CAPABILITIES => {
+                if buf.len() < 6 {
+                    return Some(InResponse::Rejected);
+                }
+                buf[0..6].copy_from_slice(&[0x00, 0x01, 0x07, 0x00, 0x00, 0x00]);
+                Some(InResponse::Accepted(&buf[..6]))
+            }
+            CHECK_ABORT_BULK_OUT_STATUS => {
+                if buf.len() < 8 {
+                    return Some(InResponse::Rejected);
+                }
+                let btag = ABORT_BTAG.load(Ordering::Relaxed);
+                let status = if btag != 0 { 0x00 } else { 0x01 };
+
+                buf[0] = status;
+                buf[1] = btag;
+                buf[2..8].fill(0);
+
+                if status == 0x00 && btag != 0 {
+                    ABORT_BTAG.store(0, Ordering::Relaxed);
+                }
+
+                Some(InResponse::Accepted(&buf[..8]))
+            }
+            _ => None,
         }
     }
 }
@@ -175,7 +211,7 @@ async fn usbtmc_runner(mut tmc: UsbTmc) {
                     }
                 }
 
-                if (12 + transfer_len) % 4 != 0 {
+                if !(12 + transfer_len).is_multiple_of(4) {
                     let _ = tmc.out.read(&mut [0; MPS]).await;
                 }
 
