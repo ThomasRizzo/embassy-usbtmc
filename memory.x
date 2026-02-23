@@ -1,0 +1,5 @@
+MEMORY
+{
+    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K   # 2 MB flash (Pico 2)
+    RAM   : ORIGIN = 0x20000000, LENGTH = 256K    # 256 KB SRAM
+}

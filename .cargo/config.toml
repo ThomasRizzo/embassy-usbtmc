@@ -1,0 +1,9 @@
+[target.thumbv8m.main-none-eabihf]
+runner = "probe-rs run --chip RP2350"   # or "elf2uf2" for picotool
+
+[build]
+target = "thumbv8m.main-none-eabihf"
+rustflags = [
+    "-C", "link-arg=-Tlink.x",
+    "-C", "link-arg=--nmagic",
+]
