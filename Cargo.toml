@@ -1,0 +1,39 @@
+[package]
+name = "embassy-usbtmc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "MVP USBTMC (SCPI) driver for Embassy on RP2350"
+repository = "https://github.com/thomasrizzo/embassy-usbtmc"
+
+[dependencies]
+embassy-rp = { version = "0.9", features = [
+    "rp235xa",
+    "time-driver",
+    "critical-section-impl",
+] }
+
+embassy-usb = { version = "0.5" }
+
+embassy-executor = { version = "0.9", features = [
+    "arch-cortex-m",
+    "executor-thread",
+] }
+embassy-sync = { version = "0.7" }
+embassy-time = { version = "0.5" }
+
+heapless = "0.8"
+
+static_cell = "2.1"
+
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true
+
+[profile.dev]
+opt-level = 1

@@ -1,0 +1,19 @@
+# Build artifacts
+/target/
+debug/
+release/
+*.uf2
+*.elf
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cargo
+Cargo.lock
